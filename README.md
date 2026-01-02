@@ -13,3 +13,8 @@ that is fully sent through wireguard interfaces.
 
 `psmall` and `pbig` in root directory are used as once off
 custom packet generators, and should be run on `src`.
+
+
+Tried `pktgen` in Linux and `trafgen` as part of netsniff-ng tools,
+but they don't seem to work on wireguard layer 3 interface so had
+to write a custom tool.
