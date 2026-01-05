@@ -71,12 +71,6 @@ locals {
   snk_wg0_ip = "192.168.100.1/24"
   mid_wg1_ip = "192.168.100.2/24"
 
-  # Authorized keys to overwrite /root/.ssh/authorized_keys with
-  root_authorized_keys = <<-KEYS
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICef0bS7x707LF/d2CFpg2RhyT315vxI9S4cM5O5u9/J naveen@d.local
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFFR3aONIwN+TCqary68VBnFdLEY6O6UOdpTY2BEaPya naveen@c.local
-KEYS
-
   # Pre-generated X25519 WireGuard keys (static, hardcoded)
   # Tunnel A: src<->mid (wg0)
   wg_a_src_priv = "gHffSe0nW0G9rgch3mqLaMO5ustBtJmZzRUx1F45Y0w="
@@ -240,16 +234,21 @@ locals {
     # Ensure root SSH key access matches exactly what you want
     install -d -m 700 /root/.ssh
     cat >/root/.ssh/authorized_keys <<'KEYS'
-${local.root_authorized_keys}
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICef0bS7x707LF/d2CFpg2RhyT315vxI9S4cM5O5u9/J naveen@d.local
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFFR3aONIwN+TCqary68VBnFdLEY6O6UOdpTY2BEaPya naveen@c.local
 KEYS
     chmod 600 /root/.ssh/authorized_keys
 
-    dnf -y install iproute ethtool tcpdump perf kernel-tools kernel-modules-extra wireguard-tools git make gcc libpcap libpcap-devel libnl3 libnl3-devel libnet libnet-devel flex bison ncurses ncurses-devel ncurses-static ncurses-compat-libs
-    #apt-get -y update && apt-get -y install iproute2 ethtool tcpdump perf-tools-unstable wireguard-tools build-essential neovim
+    if grep -qi ubuntu /etc/os-release; then
+      apt-get -y update && apt-get -y install iproute2 ethtool tcpdump perf-tools-unstable wireguard-tools build-essential neovim netsniff-ng
+    else
+      dnf -y install iproute ethtool tcpdump perf kernel-tools kernel-modules-extra wireguard-tools git make gcc libpcap libpcap-devel libnl3 libnl3-devel libnet libnet-devel flex bison ncurses ncurses-devel ncurses-static ncurses-compat-libs
+      ( git clone https://github.com/borkmann/netsniff-ng && cd netsniff-ng && ./configure && make && make install; )
+    fi
+
     cpupower frequency-set -g performance || true
 
-    ( git clone https://github.com/borkmann/netsniff-ng && cd netsniff-ng && ./configure && make && make install; )
-    ( git clone https://github.com/nnathan/aws-wg-experiment && cd aws-wg-experiment && gcc -o pbig pbig.c && gcc -o psmall psmall.c && mv pbig psmall ~root/; )
+    ( cd ~root/; git clone https://github.com/nnathan/aws-wg-experiment && cd aws-wg-experiment && gcc -o pflood pflood.c && mv pflood ~root/; )
   EOF
 }
 
