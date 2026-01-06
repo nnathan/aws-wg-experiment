@@ -160,6 +160,14 @@ resource "aws_security_group" "lab" {
   }
 
   ingress {
+    description = "All from anywhere"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
     description = "SSH (open)"
     from_port   = 22
     to_port     = 22
@@ -231,6 +239,8 @@ locals {
   common_bootstrap = <<-EOF
     set -euxo pipefail
 
+    echo 'export TERM=xterm-256color' >> ~root/.bash_profile
+
     # Ensure root SSH key access matches exactly what you want
     install -d -m 700 /root/.ssh
     cat >/root/.ssh/authorized_keys <<'KEYS'
@@ -238,6 +248,26 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICef0bS7x707LF/d2CFpg2RhyT315vxI9S4cM5O5u9/J
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFFR3aONIwN+TCqary68VBnFdLEY6O6UOdpTY2BEaPya naveen@c.local
 KEYS
     chmod 600 /root/.ssh/authorized_keys
+
+    cat >/etc/sysctl.d/90-baseline.conf <<'SYSCTLCONF'
+    # Never use ICMP redirects
+    net.ipv4.conf.all.send_redirects = 0
+    net.ipv4.conf.all.accept_redirects = 0
+    net.ipv4.conf.default.send_redirects = 0
+    net.ipv4.conf.default.accept_redirects = 0
+    net.ipv4.conf.enp39s0.accept_redirects = 0
+    net.ipv4.conf.enp39s0.send_redirects = 0
+
+    # Avoid asymmetric routing weirdness
+    net.ipv4.conf.all.rp_filter = 0
+    net.ipv4.conf.default.rp_filter = 0
+
+    # Ignore bogus ICMP
+    net.ipv4.icmp_ignore_bogus_error_responses = 1
+SYSCTLCONF
+
+    sysctl --system
+
 
     if grep -qi ubuntu /etc/os-release; then
       apt-get -y update && apt-get -y install iproute2 ethtool tcpdump perf-tools-unstable wireguard-tools build-essential neovim netsniff-ng
@@ -263,6 +293,7 @@ resource "aws_instance" "source" {
   subnet_id              = aws_subnet.main.id
   private_ip             = local.src_ip
   vpc_security_group_ids = [aws_security_group.lab.id]
+  source_dest_check      = false
 
   user_data = <<-EOF
     #!/bin/bash
@@ -305,6 +336,7 @@ resource "aws_instance" "middle" {
   subnet_id              = aws_subnet.main.id
   private_ip             = local.mid_ip
   vpc_security_group_ids = [aws_security_group.lab.id]
+  source_dest_check      = false
 
   user_data = <<-EOF
     #!/bin/bash
@@ -364,6 +396,7 @@ resource "aws_instance" "sink" {
   subnet_id              = aws_subnet.main.id
   private_ip             = local.snk_ip
   vpc_security_group_ids = [aws_security_group.lab.id]
+  source_dest_check      = false
 
   user_data = <<-EOF
     #!/bin/bash
