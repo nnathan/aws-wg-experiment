@@ -104,10 +104,17 @@ static uint16_t udp_checksum(const struct iphdr *ip, const struct udphdr *udp,
   return ~sum;
 }
 
+static int parse_mac(const char *s, uint8_t mac[ETH_ALEN]) {
+  return sscanf(s, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+                &mac[0], &mac[1], &mac[2],
+                &mac[3], &mac[4], &mac[5]) == 6;
+}
+
 /* ---------- packet builder ---------- */
 
-static size_t build_packet(uint8_t *buf, size_t payload_len, uint16_t sport,
-                           uint16_t dport) {
+static size_t build_packet(uint8_t *buf, size_t payload_len,
+		           const char *src_addr, const char *dst_addr,
+		           uint16_t sport, uint16_t dport) {
   struct iphdr *ip = (struct iphdr *)buf;
   struct udphdr *udp = (struct udphdr *)(buf + sizeof(*ip));
   uint8_t *pl = buf + sizeof(*ip) + sizeof(*udp);
@@ -124,8 +131,8 @@ static size_t build_packet(uint8_t *buf, size_t payload_len, uint16_t sport,
   ip->frag_off = 0;
   ip->ttl = 64;
   ip->protocol = IPPROTO_UDP;
-  ip->saddr = inet_addr("172.16.100.10");
-  ip->daddr = inet_addr("192.168.100.10");
+  ip->saddr = inet_addr(src_addr);
+  ip->daddr = inet_addr(dst_addr);
   ip->check = csum16(ip, sizeof(*ip));
 
   /* UDP */
@@ -144,16 +151,6 @@ static int is_l3_interface(const char *ifname) {
 /* ---------- main ---------- */
 
 int main(int argc, char **argv) {
-  uint8_t pkt_big[1500];
-  uint8_t pkt_small[512];
-
-  size_t len_big =
-      build_packet(pkt_big, 1300 - sizeof(struct iphdr) - sizeof(struct udphdr),
-                   10000, 10000);
-  size_t len_small = build_packet(
-      pkt_small, 300 - sizeof(struct iphdr) - sizeof(struct udphdr), 20000,
-      20000);
-
   uint8_t rng_state;
 
   unsigned long seed = mix(clock(), getpid(), time(NULL));
@@ -165,9 +162,12 @@ int main(int argc, char **argv) {
   unsigned long limit = 0;      /* default: infinite */
   double p_big = 128.0 / 256.0; /* default: 50% */
   uint8_t prob_big = 128;
+  char *src_addr = "172.16.100.10";
+  char *dst_addr = "192.168.100.10";
+  uint8_t dst_mac[ETH_ALEN] = {0};
 
   int opt;
-  while ((opt = getopt(argc, argv, "i:c:p:")) != -1) {
+  while ((opt = getopt(argc, argv, "i:c:p:s:d:m:")) != -1) {
     switch (opt) {
     case 'i':
       ifname = optarg;
@@ -183,8 +183,21 @@ int main(int argc, char **argv) {
       }
       prob_big = (uint8_t)(p_big * 256.0);
       break;
+    case 's':
+      src_addr = optarg;
+      break;
+    case 'd':
+      dst_addr = optarg;
+      break;
+    case 'm':
+      if (!parse_mac(optarg, dst_mac)) {
+        fprintf(stderr, "invalid MAC address: %s\n", optarg);
+        return 1;
+      }
+      break;
+
     default:
-      fprintf(stderr, "usage: %s -i <ifname> [-c count]\n", argv[0]);
+      fprintf(stderr, "usage: %s -i <ifname> [-c count] [-s src_ip] [-d dst_ip] [-m dst_mac]\n", argv[0]);
       return 1;
     }
   }
@@ -193,6 +206,20 @@ int main(int argc, char **argv) {
     fprintf(stderr, "-i <ifname> is required\n");
     return 1;
   }
+
+  uint8_t pkt_big[2048];
+  uint8_t pkt_small[1024];
+
+  size_t len_big =
+      build_packet(pkt_big, 1300 + sizeof(struct iphdr) + sizeof(struct udphdr),
+                   src_addr, dst_addr,
+                   10000, 10000);
+
+  size_t len_small = build_packet(
+      pkt_small, 300 + sizeof(struct iphdr) + sizeof(struct udphdr),
+      src_addr, dst_addr,
+      20000, 20000);
+
 
   /* socket setup */
 
@@ -218,6 +245,9 @@ int main(int argc, char **argv) {
       perror("if_nametoindex");
       return 1;
     }
+
+    sll_out.sll_halen = ETH_ALEN;
+    memcpy(sll_out.sll_addr, dst_mac, ETH_ALEN);
 
     /* Optional but fine: bind to device */
     if (bind(fd, (struct sockaddr *)&sll_out, sizeof(sll_out)) < 0) {
@@ -246,7 +276,7 @@ int main(int argc, char **argv) {
     }
 
     sin_out.sin_family = AF_INET;
-    sin_out.sin_addr.s_addr = inet_addr("192.168.100.10");
+    sin_out.sin_addr.s_addr = inet_addr(dst_addr);
   }
 
   /* core loop */
